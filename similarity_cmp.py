@@ -13,7 +13,8 @@ from tslearn.piecewise import PiecewiseAggregateApproximation
 
 
 # 解决画图中文乱码问题
-plt.rcParams['font.sans-serif'] = ['SimHei'] 
+plt.rcParams['font.sans-serif'] = ['Droid Sans Fallback']
+
 plt.rcParams['axes.unicode_minus'] = False
 
 # ==========================================
