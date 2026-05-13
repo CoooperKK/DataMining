@@ -20,6 +20,8 @@ __pycache__/
 *.sqlite3
 *.db
 
+*.csv
+
 # Jupyter Notebook
 .ipynb_checkpoints/
 *.ipynb_checkpoints
@@ -95,4 +97,4 @@ desktop.ini
 
 # 文档生成
 docs/_build/
-site/
+site/dataset/SnP_daily_update.csv
