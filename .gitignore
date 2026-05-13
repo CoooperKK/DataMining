@@ -20,19 +20,6 @@ __pycache__/
 *.sqlite3
 *.db
 
-# 数据文件（重要：避免提交大文件）
-*.csv
-*.xlsx
-*.xls
-*.json
-*.pkl
-*.pickle
-*.h5
-*.parquet
-data/
-raw_data/
-processed_data/
-
 # Jupyter Notebook
 .ipynb_checkpoints/
 *.ipynb_checkpoints

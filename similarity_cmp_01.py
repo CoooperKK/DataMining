@@ -32,7 +32,7 @@ TIME_WINDOW = None  # 例如: 500 表示只使用前500个交易日
 print("Step 1: 正在解析自定义数据...")
 
 # 读取数据
-raw_df = pd.read_csv('filtered_stock_data.csv')
+raw_df = pd.read_csv('filtered_stock_data_high_vol.csv')
 
 # 1. 提取行业信息
 industries = raw_df.iloc[0, 2:].to_dict()
@@ -81,7 +81,7 @@ print(f"解析完毕：共有 {len(stock_names)} 只股票，{X_scaled.shape[1]}
 # ==========================================
 # Step 2: 多算法对比实验
 # ==========================================
-n_clusters = 16
+n_clusters = 5
 results = {}
 
 # ==========================================
@@ -138,7 +138,7 @@ km_dtw = TimeSeriesKMeans(
     max_iter=5,
     metric_params={
         "global_constraint": "sakoe_chiba",
-        "sakoe_chiba_radius": 10  # 放宽窗口，提高准确性
+        "sakoe_chiba_radius": 3  # 放宽窗口，提高准确性
     },
     n_jobs=1,
     random_state=42
@@ -250,3 +250,28 @@ except Exception as e:
     print(f"\n可视化失败: {e}")
 
 print("\n✅ 程序运行完成！")
+
+
+
+
+# 检查数据是否有重复
+df = pd.read_csv('filtered_stock_data_high_vol.csv')
+returns = df.iloc[1:, 2:].astype(float)
+print(f"数据形状: {returns.shape}")
+
+# 检查每只股票是否与其他股票完全相同
+unique_series = []
+for col in returns.columns:
+    is_dup = any(returns[col].equals(returns[other]) for other in returns.columns if other != col)
+    if is_dup:
+        print(f"发现重复: {col}")
+
+# 检查方差是否过小（可能全是0）
+var = returns.var()
+print(f"方差<=0.001的股票数: {(var <= 0.001).sum()}")
+
+# 检查两两相关系数分布
+corr = returns.corr().values.copy()  # 添加 .copy()
+np.fill_diagonal(corr, np.nan)
+print(f"平均相关系数: {np.nanmean(corr):.4f}")
+print(f"相关系数标准差: {np.nanstd(corr):.4f}")

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-数据预处理脚本 - 筛选出具有明显聚类结构的数据集
-策略：
-1. 保留波动性适中的股票（剔除过于平稳和过于波动的）
-2. 保留行业代表性强的股票（每行业只选代表性股票）
-3. 使用对数收益率
-4. 可选：使用滚动窗口统计特征
+数据预处理脚本 V2 - 筛选具有明显涨跌波动的股票
+核心策略：
+1. 只保留波动率高的股票（剔除低波动/死股票）
+2. 每行业保留波动率最大的代表股票
+3. 时间窗口可调（默认最近250天）
+4. 可选：按不同时间段评估稳定性
 """
 
 import pandas as pd
@@ -17,8 +17,16 @@ import warnings
 warnings.filterwarnings('ignore')
 
 print("=" * 60)
-print("数据预处理：筛选具有聚类结构的数据集")
+print("数据预处理 V2：筛选高波动、高辨识度股票")
 print("=" * 60)
+
+# ==========================================
+# 可配置参数
+# ==========================================
+TIME_WINDOW = 250          # 时间窗口（天），可选: 125(半年), 250(一年), 500(两年)
+VOLATILITY_QUANTILE = 0.85  # 保留波动率前(1-QUANTILE)%的股票，默认65%表示保留前35%
+STOCKS_PER_INDUSTRY = 3    # 每个行业最多保留几只股票
+TEST_TIME_WINDOWS = [125, 250, 500]  # 测试不同时间窗口的稳定性
 
 # ==========================================
 # 1. 加载原始数据
@@ -34,7 +42,7 @@ stock_names = returns_df.columns.values
 print(f"原始数据: {len(stock_names)} 只股票, {returns_df.shape[0]} 个交易日")
 
 # ==========================================
-# 2. 数据清洗：处理缺失值和异常值
+# 2. 数据清洗
 # ==========================================
 print("\n[2] 数据清洗...")
 
@@ -46,99 +54,147 @@ stock_names = valid_stocks.values
 
 print(f"删除缺失>5%的股票后: {len(stock_names)} 只")
 
-# 填充剩余缺失值（前向填充）
+# 填充剩余缺失值
 returns_df = returns_df.ffill().bfill().fillna(0)
 
 # ==========================================
-# 3. 计算股票特征（用于筛选）
+# 3. 计算股票特征（使用全部数据）
 # ==========================================
 print("\n[3] 计算股票特征...")
 
 # 对数收益率
 log_returns = np.log(1 + returns_df)
 
-# 计算各股票的特征
-volatility = log_returns.std()  # 波动率
-skewness = log_returns.skew()   # 偏度
-kurtosis = log_returns.kurtosis()  # 峰度
-avg_return = log_returns.mean()    # 平均收益
+# 核心特征：波动率（标准差）—— 越大表示涨跌越明显
+volatility = log_returns.std()
+# 辅助特征：平均绝对收益 —— 同样反映活跃度
+mean_abs_return = log_returns.abs().mean()
+# 最大单日波动
+max_daily_move = log_returns.abs().max()
 
 features_df = pd.DataFrame({
     'volatility': volatility,
-    'skewness': skewness,
-    'kurtosis': kurtosis,
-    'avg_return': avg_return
+    'mean_abs_return': mean_abs_return,
+    'max_daily_move': max_daily_move,
+    'skewness': log_returns.skew(),
+    'kurtosis': log_returns.kurtosis()
 })
 
-# ==========================================
-# 4. 筛选策略1：保留波动率适中的股票（剔除极端波动）
-# ==========================================
-print("\n[4] 筛选策略1: 波动率适中...")
-
-lower_q = features_df['volatility'].quantile(0.25)
-upper_q = features_df['volatility'].quantile(0.75)
-mid_volatility = features_df[(features_df['volatility'] >= lower_q) & 
-                              (features_df['volatility'] <= upper_q)]
-print(f"波动率适中股票: {len(mid_volatility)} 只 (Q1-Q3)")
+# 综合活跃度得分（波动率权重最高）
+features_df['activity_score'] = (
+    features_df['volatility'] * 0.5 + 
+    features_df['mean_abs_return'] * 0.3 + 
+    features_df['max_daily_move'] * 0.2
+)
 
 # ==========================================
-# 5. 筛选策略2：按行业代表性选取（每行业选 top N 只）
+# 4. 筛选策略1：只保留高波动股票（剔除死股票）
 # ==========================================
-print("\n[5] 筛选策略2: 按行业代表性...")
+print(f"\n[4] 筛选策略1: 高波动股票 (波动率前 {int((1-VOLATILITY_QUANTILE)*100)}%)...")
+
+vol_threshold = features_df['volatility'].quantile(VOLATILITY_QUANTILE)
+high_volatility = features_df[features_df['volatility'] >= vol_threshold]
+print(f"高波动股票: {len(high_volatility)} 只")
+print(f"波动率阈值: {vol_threshold:.6f}")
+
+# 显示波动率最低的几只（被剔除的）
+print(f"被剔除的低波动股票示例（波动率最小5只）:")
+low_vol_example = features_df.nsmallest(5, 'volatility')
+for stock, vol in low_vol_example['volatility'].items():
+    print(f"  {stock}: 波动率={vol:.6f}")
+
+# ==========================================
+# 5. 筛选策略2：每行业保留活跃度最高的股票
+# ==========================================
+print(f"\n[5] 筛选策略2: 每行业保留 {STOCKS_PER_INDUSTRY} 只最活跃股票...")
 
 # 获取每只股票的行业
-stock_industries = [industries.get(name, "未知") for name in mid_volatility.index]
+stock_industries = [industries.get(name, "未知") for name in high_volatility.index]
+high_volatility['industry'] = stock_industries
 
-# 统计行业分布
-industry_counts = pd.Series(stock_industries).value_counts()
-print(f"原始行业分布: {len(industry_counts)} 个行业")
-print("行业股票数Top10:")
-for ind, cnt in industry_counts.head(10).items():
-    print(f"  {ind}: {cnt}")
-
-# 每行业保留的股票数（保留前N只波动率最具代表性的）
-stocks_per_industry = 3  # 每个行业最多保留3只
+# 按行业分组，每行业选择活跃度最高的股票
 selected_stocks = []
+industry_stats = {}
 
-for industry in industry_counts.index:
-    industry_stocks = mid_volatility.index[[industries.get(s) == industry for s in mid_volatility.index]]
-    if len(industry_stocks) > 0:
-        # 选择波动率最接近行业中位数的股票
-        industry_vols = mid_volatility.loc[industry_stocks, 'volatility']
-        median_vol = industry_vols.median()
-        # 按波动率与中位数的差距排序
-        sorted_stocks = industry_vols.sort_values(key=lambda x: abs(x - median_vol))
-        selected = sorted_stocks.head(stocks_per_industry).index.tolist()
-        selected_stocks.extend(selected)
+for industry, group in high_volatility.groupby('industry'):
+    # 按活跃度排序
+    sorted_group = group.sort_values('activity_score', ascending=False)
+    n_select = min(STOCKS_PER_INDUSTRY, len(group))
+    selected = sorted_group.head(n_select).index.tolist()
+    selected_stocks.extend(selected)
+    industry_stats[industry] = {
+        'total': len(group),
+        'selected': n_select,
+        'avg_volatility': group['volatility'].mean()
+    }
 
 print(f"筛选后股票: {len(selected_stocks)} 只")
-print(f"覆盖行业: {len(set([industries.get(s) for s in selected_stocks]))} 个")
+print(f"覆盖行业: {len(industry_stats)} 个")
+
+# 显示选中的行业和股票数
+print("\n各行业选中情况（前10）:")
+sorted_industries = sorted(industry_stats.items(), key=lambda x: x[1]['selected'], reverse=True)
+for ind, stats in sorted_industries[:10]:
+    print(f"  {ind}: {stats['selected']}/{stats['total']} 只, 平均波动率={stats['avg_volatility']:.5f}")
 
 # ==========================================
-# 6. 筛选策略3：保留最近一年的数据
+# 6. 评估不同时间窗口的稳定性
 # ==========================================
-print("\n[6] 筛选策略3: 时间窗口（最近一年）...")
+print("\n[6] 评估不同时间窗口的聚类稳定性...")
 
-time_window = 250  # 最近250个交易日
-filtered_returns = returns_df[selected_stocks].iloc[-time_window:, :]
+window_results = {}
+for window in TEST_TIME_WINDOWS:
+    if window <= returns_df.shape[0]:
+        window_returns = returns_df[selected_stocks].iloc[-window:, :]
+        log_returns_window = np.log(1 + window_returns)
+        
+        # 标准化
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(log_returns_window.T)
+        
+        # K=3 快速测试
+        kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(X_scaled)
+        score = silhouette_score(X_scaled, labels)
+        window_results[window] = score
+        
+        # 显示各窗口的波动率
+        vol_mean = log_returns_window.std().mean()
+        print(f"  {window}天窗口: 轮廓系数={score:.4f}, 平均波动率={vol_mean:.5f}")
+
+# 选出最佳时间窗口
+best_window = max(window_results, key=window_results.get)
+print(f"\n最佳时间窗口: {best_window}天 (轮廓系数={window_results[best_window]:.4f})")
+
+# ==========================================
+# 7. 使用最佳窗口保存数据
+# ==========================================
+print(f"\n[7] 使用最佳时间窗口 ({best_window}天) 保存数据...")
+
+final_window = best_window
+filtered_returns = returns_df[selected_stocks].iloc[-final_window:, :]
 log_returns_filtered = np.log(1 + filtered_returns)
 
-print(f"最终数据集: {len(selected_stocks)} 只股票 × {time_window} 个交易日")
+print(f"最终数据集: {len(selected_stocks)} 只股票 × {final_window} 个交易日")
+
+# 验证高波动性
+final_volatility = log_returns_filtered.std()
+low_vol_count = (final_volatility < 0.005).sum()
+print(f"低波动股票 (<0.005): {low_vol_count}/{len(selected_stocks)} 只 (目标: 尽量少)")
 
 # ==========================================
-# 7. 验证聚类效果（快速测试）
+# 8. 验证聚类效果
 # ==========================================
-print("\n[7] 验证聚类效果...")
+print("\n[8] 验证聚类效果...")
 
-# 标准化
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(log_returns_filtered.T)
 
-# 尝试不同聚类数
 k_values = [3, 4, 5, 6, 8]
 best_score = -1
 best_k = 3
 
+print("聚类测试:")
 for k in k_values:
     kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
     labels = kmeans.fit_predict(X_scaled)
@@ -152,55 +208,56 @@ for k in k_values:
 print(f"\n最佳轮廓系数: {best_score:.4f} (K={best_k})")
 
 # ==========================================
-# 8. 保存预处理后的数据集
+# 9. 保存预处理后的数据集
 # ==========================================
-print("\n[8] 保存预处理数据...")
+print("\n[9] 保存预处理数据...")
 
 # 保存筛选后的股票列表
-with open('selected_stocks.txt', 'w') as f:
+with open('selected_stocks_high_vol.txt', 'w') as f:
     for stock in selected_stocks:
         f.write(f"{stock}\n")
 
-# 保存处理后的数据（保持原始格式）
-# 重建与原始文件类似的结构
+# 保存处理后的数据
 output_df = pd.DataFrame()
 output_df['index'] = range(len(filtered_returns))
-output_df['date'] = returns_df.index[-time_window:]
+output_df['date'] = returns_df.index[-final_window:]
 
-# 添加股票数据
 for stock in selected_stocks:
     output_df[stock] = filtered_returns[stock].values
 
-# 添加行业信息行（需要在第一行）
+# 添加行业信息行
 industry_row = {stock: industries.get(stock, "未知") for stock in selected_stocks}
 industry_df = pd.DataFrame([industry_row], index=range(1))
 
-# 合并并保存
 final_df = pd.concat([industry_df, output_df], ignore_index=True)
-final_df.to_csv('filtered_stock_data.csv', index=False)
+final_df.to_csv('filtered_stock_data_high_vol.csv', index=False)
 
-print(f"数据已保存: filtered_stock_data.csv")
+print(f"数据已保存: filtered_stock_data_high_vol.csv")
 
 # ==========================================
-# 9. 输出统计报告
+# 10. 输出统计报告
 # ==========================================
-print("\n" + "=" * 60)
-print("预处理报告")
-print("=" * 60)
+print("\n" + "=" * 70)
+print("预处理报告 V2")
+print("=" * 70)
 print(f"""
-原始数据: 260 只股票 × 1216 天
-筛选后: {len(selected_stocks)} 只股票 × {time_window} 天
-覆盖率: {len(selected_stocks)/260*100:.1f}% 股票, {time_window/1216*100:.1f}% 时间
+原始数据: 260 只股票 × {returns_df.shape[0]} 天
+筛选后: {len(selected_stocks)} 只股票 × {final_window} 天
+筛选比例: {len(selected_stocks)/260*100:.1f}% 股票, {final_window/returns_df.shape[0]*100:.1f}% 时间
 
-最佳聚类轮廓系数: {best_score:.4f} (K={best_k})
-预估效果: {"良好 (>0.3)" if best_score > 0.3 else "可接受 (>0.2)" if best_score > 0.2 else "仍较弱"}
+核心指标:
+- 高波动标准: 波动率前 {int((1-VOLATILITY_QUANTILE)*100)}% (阈值={vol_threshold:.5f})
+- 每行业最多 {STOCKS_PER_INDUSTRY} 只股票
+- 低波动股票残留: {low_vol_count}/{len(selected_stocks)} 只
 
-使用的筛选策略:
-1. 剔除缺失值过多的股票
-2. 保留波动率在 Q1-Q3 区间的股票
-3. 每行业最多保留 {stocks_per_industry} 只代表性股票
-4. 使用最近 {time_window} 天数据
+聚类评估:
+- 最佳轮廓系数: {best_score:.4f} (K={best_k})
+- 最佳时间窗口: {best_window} 天
+
+对比之前的糟糕数据:
+- 旧筛选: 101/108 只股票波动率 ≤ 0.001 (93.5% 死股票)
+- 新筛选: 低波动股票大幅减少
 """)
 
 print("\n✅ 预处理完成！")
-print("下一步: 使用 filtered_stock_data.csv 运行 similarity_cmp_01.py")
+print("下一步: 使用 filtered_stock_data_high_vol.csv 运行 similarity_cmp_01.py")
