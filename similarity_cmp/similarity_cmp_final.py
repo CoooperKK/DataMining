@@ -15,6 +15,7 @@ from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_har
 from sklearn.ensemble import RandomTreesEmbedding
 from tslearn.clustering import TimeSeriesKMeans
 from sklearn.decomposition import PCA
+from sklearn.manifold import MDS
 
 # 忽略警告
 import warnings
@@ -41,8 +42,9 @@ raw_df = pd.read_csv('./dataset/stock_data_sp500_paper.csv')
 price_data = raw_df.iloc[1:, 2:].astype(float)
 
 # 限制股票数量（可选，加速计算）
-price_data = price_data.iloc[:, :200]
-print(f"限制为前200只股票: {price_data.shape}")
+stock_num = 400
+price_data = price_data.iloc[:, :stock_num]
+print(f"限制为前 {stock_num} 只股票: {price_data.shape}")
 
 stock_names = price_data.columns.values
 dates = raw_df.iloc[1:, 1].tolist()
@@ -159,19 +161,30 @@ dist_pearson = 1 - np.abs(corr_matrix)
 dist_pearson = (dist_pearson + dist_pearson.T) / 2
 np.fill_diagonal(dist_pearson, 0)
 
-# 使用层次聚类
-labels_pearson = AgglomerativeClustering(
-    n_clusters=n_clusters,
-    metric='precomputed',
-    linkage='average'
-).fit_predict(dist_pearson)
+# ========== 新增 MDS 步骤 ==========
+from sklearn.manifold import MDS
+
+# 第3步：MDS 将距离矩阵降维到 50 维坐标
+# 这样 K-Means 就能处理了
+mds = MDS(
+    n_components=50,           # 降到50维（足够保留距离信息）
+    dissimilarity='precomputed', # 告诉 MDS：输入是距离矩阵
+    random_state=42,           # 固定结果，保证可重复
+    normalized_stress='auto'   # 自动处理应力值
+)
+X_pearson = mds.fit_transform(dist_pearson)  # 形状: (n_stocks, 50)
+# =================================
+
+# 用 K-Means 聚类（现在和 Euclidean 用同样的算法）
+km_pearson = KMeans(n_clusters = n_clusters, random_state = 42, n_init = 10);
+labels_pearson = km_pearson.fit_predict(X_pearson)
 
 pearson_time = time.time() - t0
 
-# 注意：轮廓系数使用预计算的距离矩阵
+# 第5步：评估（用原始数据 X_scaled 计算指标，保持评估标准一致）
 results['Pearson'] = {
     'labels': labels_pearson,
-    'silhouette': silhouette_score(dist_pearson, labels_pearson, metric='precomputed'),
+    'silhouette': silhouette_score(X_pearson, labels_pearson),  # 用原始数据评估
     'db_index': davies_bouldin_score(X_scaled, labels_pearson),
     'ch_index': calinski_harabasz_score(X_scaled, labels_pearson),
     'time': pearson_time
@@ -314,7 +327,7 @@ axes[1, 1].set_ylabel('Time (seconds)')
 axes[1, 1].set_title('计算耗时对比（越低越好）')
 
 plt.tight_layout()
-plt.savefig('resuslt/sp500/top200/four_methods_comparison.png', dpi=150)
+plt.savefig('resuslt/sp500/top400/four_methods_comparison.png', dpi=150)
 print("可视化已保存: four_methods_comparison.png")
 
 # ==========================================
@@ -350,7 +363,7 @@ for idx, method in enumerate(methods_to_plot):
     ax.legend(loc='best', fontsize=8)
 
 plt.tight_layout()
-plt.savefig('resuslt/sp500/top200/all_methods_clustering.png', dpi=150)
+plt.savefig('resuslt/sp500/top400/all_methods_clustering.png', dpi=150)
 print("可视化已保存: all_methods_clustering.png")
 
 # ==========================================
@@ -392,7 +405,7 @@ for idx, method in enumerate(methods_to_plot):
 
 plt.tight_layout()
 plt.colorbar(im, ax=axes3, label='相关系数')
-plt.savefig('resuslt/sp500/top200/all_methods_heatmap.png', dpi=150)
+plt.savefig('resuslt/sp500/top400/all_methods_heatmap.png', dpi=150)
 print("可视化已保存: all_methods_heatmap.png")
 
 # ==========================================
@@ -415,7 +428,7 @@ for idx, method in enumerate(methods_to_plot):
     ax.set_title(f'{method} 聚类分布\n(轮廓系数={results[method]["silhouette"]:.4f})')
 
 plt.tight_layout()
-plt.savefig('resuslt/sp500/top200/all_methods_piecharts.png', dpi=150)
+plt.savefig('resuslt/sp500/top400/all_methods_piecharts.png', dpi=150)
 print("可视化已保存: all_methods_piecharts.png")
 
 print("\n✅ 所有可视化生成完成！")
