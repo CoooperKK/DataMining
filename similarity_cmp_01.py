@@ -32,7 +32,7 @@ TIME_WINDOW = None  # 例如: 500 表示只使用前500个交易日
 print("Step 1: 正在解析自定义数据...")
 
 # 读取数据
-raw_df = pd.read_csv('filtered_stock_data_high_vol.csv')
+raw_df = pd.read_csv('./dataset/stock_data_sp500.csv')
 
 # 1. 提取行业信息
 industries = raw_df.iloc[0, 2:].to_dict()
@@ -255,7 +255,7 @@ print("\n✅ 程序运行完成！")
 
 
 # 检查数据是否有重复
-df = pd.read_csv('filtered_stock_data_high_vol.csv')
+df = pd.read_csv('./dataset/stock_data_sp500.csv')
 returns = df.iloc[1:, 2:].astype(float)
 print(f"数据形状: {returns.shape}")
 
