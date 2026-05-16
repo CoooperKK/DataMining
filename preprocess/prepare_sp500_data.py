@@ -7,6 +7,7 @@
 - 价格指数：起点 = 100
 - 平滑：SMA-10
 - 删除：起始日期不一致的公司（35家）
+- 新增：删除波动率最低的100只股票
 """
 
 import pandas as pd
@@ -17,6 +18,7 @@ warnings.filterwarnings('ignore')
 print("=" * 70)
 print("论文复现：S&P 500 数据预处理")
 print("(2013-02-08 到 2018-02-08, 价格指数, SMA-10)")
+print("新增：删除低波动率股票")
 print("=" * 70)
 
 # ==========================================
@@ -136,14 +138,42 @@ price_smoothed = price_smoothed.bfill().ffill()  # 填充边缘缺失
 print(f"平滑后数据形状: {price_smoothed.shape}")
 
 # ==========================================
-# 7. 处理缺失值
+# 7. 计算波动率并删除低波动率股票（新增）
 # ==========================================
-print("\n[7] 处理缺失值...")
+print("\n[7] 计算波动率并删除低波动率股票...")
+
+# 计算每只股票的波动率（价格指数的标准差）
+volatilities = price_smoothed.std()
+print(f"波动率范围: {volatilities.min():.4f} - {volatilities.max():.4f}")
+
+# 按波动率排序
+volatilities_sorted = volatilities.sort_values(ascending=False)
+print(f"\n波动率最高的5只股票:")
+for stock, vol in volatilities_sorted.head(5).items():
+    print(f"  {stock}: {vol:.4f}")
+
+print(f"\n波动率最低的5只股票:")
+for stock, vol in volatilities_sorted.tail(5).items():
+    print(f"  {stock}: {vol:.4f}")
+
+# 删除波动率最低的 N 只股票
+N_TO_REMOVE = 100  # 删除100只低波动率股票
+high_vol_stocks = volatilities_sorted.index[N_TO_REMOVE:].tolist()
+print(f"\n删除 {N_TO_REMOVE} 只波动率最低的股票")
+print(f"保留股票数量: {len(high_vol_stocks)}")
+
+price_filtered_high_vol = price_smoothed[high_vol_stocks]
+print(f"删除低波动率股票后数据形状: {price_filtered_high_vol.shape}")
+
+# ==========================================
+# 8. 处理缺失值
+# ==========================================
+print("\n[8] 处理缺失值...")
 
 # 删除缺失过多的股票（>10%）
-missing_ratio = price_smoothed.isna().mean()
+missing_ratio = price_filtered_high_vol.isna().mean()
 valid_stocks = missing_ratio[missing_ratio < 0.1].index
-price_final = price_smoothed[valid_stocks]
+price_final = price_filtered_high_vol[valid_stocks]
 
 print(f"删除缺失>10%的股票后: {len(valid_stocks)} 只")
 
@@ -157,23 +187,26 @@ if price_final.isna().any().any():
 print(f"最终数据: {price_final.shape[0]} 天 × {price_final.shape[1]} 只股票")
 
 # ==========================================
-# 8. 限制股票数量（可选，论文有约470只）
+# 9. 最终数据统计
 # ==========================================
-print("\n[8] 最终数据准备...")
+print("\n[9] 最终数据统计...")
 
-# 论文实际使用了约470只股票，这里可以全部保留
-# 如果需要限制数量以加快速度，取消下面的注释
-# MAX_STOCKS = 200
-# if price_final.shape[1] > MAX_STOCKS:
-#     price_final = price_final.iloc[:, :MAX_STOCKS]
-#     print(f"限制为前 {MAX_STOCKS} 只股票")
+print(f"最终股票数量: {price_final.shape[1]}")
+print(f"最终交易日数量: {price_final.shape[0]}")
+print(f"日期范围: {price_final.index.min().date()} 到 {price_final.index.max().date()}")
 
-print(f"最终: {price_final.shape[1]} 只股票 × {price_final.shape[0]} 天")
+# 计算最终数据集的波动率分布
+final_volatilities = price_final.std()
+print(f"\n最终数据集波动率统计:")
+print(f"  最小波动率: {final_volatilities.min():.4f}")
+print(f"  平均波动率: {final_volatilities.mean():.4f}")
+print(f"  中位数波动率: {final_volatilities.median():.4f}")
+print(f"  最大波动率: {final_volatilities.max():.4f}")
 
 # ==========================================
-# 9. 保存为原始代码兼容的格式
+# 10. 保存为原始代码兼容的格式
 # ==========================================
-print("\n[9] 保存数据...")
+print("\n[10] 保存数据...")
 
 # 转置：行=股票，列=交易日
 price_T = price_final.T
@@ -204,15 +237,13 @@ final_df.to_csv(output_path, index=False)
 print(f"\n✅ 数据已保存: {output_path}")
 
 # ==========================================
-# 10. 验证
+# 11. 验证
 # ==========================================
-print("\n[10] 验证...")
+print("\n[11] 验证...")
 print(f"文件形状: {final_df.shape[0]} 行 × {final_df.shape[1]} 列")
 print(f"股票数量: {price_final.shape[1]}")
 print(f"交易日数量: {price_final.shape[0]}")
-print(f"日期范围: {price_final.index.min().date()} 到 {price_final.index.max().date()}")
 
-# 显示前2行前5列
 print("\n前2行前5列:")
 print(final_df.iloc[:2, :5])
 
@@ -222,4 +253,6 @@ with open('dataset/sp500_tickers_paper.txt', 'w') as f:
         f.write(f"{stock}\n")
 
 print("\n✅ 预处理完成！")
+print(f"删除了 {N_TO_REMOVE} 只低波动率股票")
+print(f"最终保留 {price_final.shape[1]} 只高波动率股票")
 print("下一步: 使用 dataset/stock_data_sp500_paper.csv 运行聚类分析")
