@@ -83,13 +83,6 @@ secrets.py
 *.log
 *.out
 
-# 压缩文件
-*.zip
-*.tar
-*.gz
-*.rar
-*.7z
-
 # 系统文件
 .DS_Store
 Thumbs.db
