@@ -309,6 +309,115 @@ print(f"\n🏆 Best Method (by Silhouette): {best_method} (Silhouette = {results
 best_cpcc = max(results, key=lambda x: results[x]['cpcc'])
 print(f"🏆 Best Method (by CPCC): {best_cpcc} (CPCC = {results[best_cpcc]['cpcc']:.4f})")
 
+# # ==========================================
+# # 11. 折线图展示聚类效果（学术风格）- 所有股票曲线
+# # ==========================================
+# print("\n[10] Generating cluster assignment plots...")
+
+# # 设置学术风格
+# plt.style.use('seaborn-v0_8-whitegrid')
+# plt.rcParams['font.family'] = 'serif'
+# plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+# plt.rcParams['font.size'] = 11
+# plt.rcParams['axes.labelsize'] = 12
+# plt.rcParams['axes.titlesize'] = 12
+# plt.rcParams['legend.fontsize'] = 9
+# plt.rcParams['figure.dpi'] = 150
+# plt.rcParams['savefig.dpi'] = 300
+# plt.rcParams['savefig.bbox'] = 'tight'
+
+# # 学术颜色方案
+# cluster_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#F781BF', '#A65628', '#FDC086']
+
+# fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+# fig.suptitle('Stock Price Index Curves Colored by Cluster Assignment', fontsize=14, fontweight='bold', y=0.98)
+
+# methods_to_plot = ['Euclidean', 'Pearson', 'DTW', 'Isolation Kernel']
+
+# # 计算时间轴
+# if USE_RECENT_YEAR:
+#     n_days = time_window if isinstance(time_window, int) else 250
+#     time_points = np.arange(1, n_days + 1)
+# else:
+#     n_days = X_scaled.shape[1]
+#     time_points = np.arange(1, n_days + 1)
+
+# # 采样参数：最多绘制120条曲线
+# MAX_LINES_TOTAL = 100
+# np.random.seed(42)
+
+# for idx, method in enumerate(methods_to_plot):
+#     row = idx // 2
+#     col = idx % 2
+#     ax = axes[row, col]
+    
+#     labels = results[method]['labels']
+#     unique_labels, counts = np.unique(labels, return_counts=True)
+#     largest_cluster = unique_labels[np.argmax(counts)]
+    
+#     # 为每个簇分配颜色（最大簇为橙黄色）
+#     other_colors = [c for c in cluster_colors if c != '#FF8C00']
+#     label_to_color = {}
+#     other_idx = 0
+#     for label in unique_labels:
+#         if label == largest_cluster:
+#             label_to_color[label] = '#FF8C00'  # 橙黄色
+#         else:
+#             label_to_color[label] = other_colors[other_idx % len(other_colors)]
+#             other_idx += 1
+    
+#     # 按簇分组采样，总数不超过 MAX_LINES_TOTAL
+#     cluster_indices = {label: np.where(labels == label)[0] for label in unique_labels}
+#     sample_indices = []
+    
+#     for label in unique_labels:
+#         cluster_size = len(cluster_indices[label])
+#         if label == largest_cluster:
+#             n_sample = min(cluster_size, int(MAX_LINES_TOTAL * 0.6))
+#         else:
+#             other_total = sum(len(cluster_indices[l]) for l in unique_labels if l != largest_cluster)
+#             if other_total > 0:
+#                 n_sample = min(cluster_size, max(1, int(MAX_LINES_TOTAL * 0.4 * cluster_size / other_total)))
+#             else:
+#                 n_sample = min(cluster_size, 3)
+#         sampled = np.random.choice(cluster_indices[label], n_sample, replace=False)
+#         sample_indices.extend(sampled)
+    
+#     if len(sample_indices) > MAX_LINES_TOTAL:
+#         sample_indices = np.random.choice(sample_indices, MAX_LINES_TOTAL, replace=False)
+    
+#     # 绘制曲线：最大簇更突出
+#     for i in sample_indices:
+#         color = label_to_color[labels[i]]
+#         if labels[i] == largest_cluster:
+#             ax.plot(time_points, X_scaled[i, :], color=color, linewidth=1.2, alpha=0.5)
+#         else:
+#             ax.plot(time_points, X_scaled[i, :], color=color, linewidth=0.6, alpha=0.5)
+    
+#     # 图例
+#     legend_handles = []
+#     for label in unique_labels:
+#         count = np.sum(labels == label)
+#         color = label_to_color[label]
+#         if label == largest_cluster:
+#             label_name = f'Major Cluster (n={count})'
+#         else:
+#             label_name = f'Cluster {label+1} (n={count})'
+#         legend_handles.append(plt.Line2D([0], [0], color=color, linewidth=2, label=label_name))
+#     ax.legend(handles=legend_handles, loc='best', frameon=True, fancybox=True, fontsize=8)
+    
+#     ax.set_title(f'{method}', fontweight='bold')
+#     ax.set_xlabel('Trading Day', fontsize=10)
+#     ax.set_ylabel('Standardized Price Index', fontsize=10)
+#     ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.5)
+#     ax.set_xlim(1, n_days)
+
+# plt.tight_layout()
+# plt.savefig('result/hierarchical/cluster_curves_comparison.png', dpi=300, bbox_inches='tight')
+# plt.savefig('result/hierarchical/cluster_curves_comparison.pdf', format='pdf', bbox_inches='tight')
+# print("Visualization saved: result/hierarchical/cluster_curves_comparison.png/pdf")
+# ==========================================
+
 # ==========================================
 # 11. 折线图展示聚类效果（学术风格）- 所有股票曲线
 # ==========================================
@@ -330,7 +439,7 @@ plt.rcParams['savefig.bbox'] = 'tight'
 cluster_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#F781BF', '#A65628', '#FDC086']
 
 fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-fig.suptitle('Stock Price Index Curves Colored by Cluster Assignment', fontsize=14, fontweight='bold', y=0.98)
+fig.suptitle('Stock Price Index Curves Colored by Cluster Assignment (Excluding Major Cluster)', fontsize=14, fontweight='bold', y=0.98)
 
 methods_to_plot = ['Euclidean', 'Pearson', 'DTW', 'Isolation Kernel']
 
@@ -342,7 +451,7 @@ else:
     n_days = X_scaled.shape[1]
     time_points = np.arange(1, n_days + 1)
 
-# 采样参数：最多绘制120条曲线
+# 采样参数：最多绘制100条曲线
 MAX_LINES_TOTAL = 100
 np.random.seed(42)
 
@@ -355,68 +464,57 @@ for idx, method in enumerate(methods_to_plot):
     unique_labels, counts = np.unique(labels, return_counts=True)
     largest_cluster = unique_labels[np.argmax(counts)]
     
-    # 为每个簇分配颜色（最大簇为橙黄色）
-    other_colors = [c for c in cluster_colors if c != '#FF8C00']
+    # 为每个簇分配颜色
     label_to_color = {}
-    other_idx = 0
-    for label in unique_labels:
-        if label == largest_cluster:
-            label_to_color[label] = '#FF8C00'  # 橙黄色
-        else:
-            label_to_color[label] = other_colors[other_idx % len(other_colors)]
-            other_idx += 1
+    other_labels = [l for l in unique_labels if l != largest_cluster]
+    for i, label in enumerate(other_labels):
+        label_to_color[label] = cluster_colors[i % len(cluster_colors)]
     
-    # 按簇分组采样，总数不超过 MAX_LINES_TOTAL
-    cluster_indices = {label: np.where(labels == label)[0] for label in unique_labels}
+    # 按簇分组采样，只画非最大簇
+    cluster_indices = {label: np.where(labels == label)[0] for label in other_labels}
     sample_indices = []
+    other_total = sum(len(cluster_indices[l]) for l in other_labels)
     
-    for label in unique_labels:
+    for label in other_labels:
         cluster_size = len(cluster_indices[label])
-        if label == largest_cluster:
-            n_sample = min(cluster_size, int(MAX_LINES_TOTAL * 0.6))
+        if other_total > 0:
+            n_sample = min(cluster_size, max(1, int(MAX_LINES_TOTAL * cluster_size / other_total)))
         else:
-            other_total = sum(len(cluster_indices[l]) for l in unique_labels if l != largest_cluster)
-            if other_total > 0:
-                n_sample = min(cluster_size, max(1, int(MAX_LINES_TOTAL * 0.4 * cluster_size / other_total)))
-            else:
-                n_sample = min(cluster_size, 3)
+            n_sample = min(cluster_size, 3)
         sampled = np.random.choice(cluster_indices[label], n_sample, replace=False)
         sample_indices.extend(sampled)
     
     if len(sample_indices) > MAX_LINES_TOTAL:
         sample_indices = np.random.choice(sample_indices, MAX_LINES_TOTAL, replace=False)
     
-    # 绘制曲线：最大簇更突出
+    # 绘制曲线
     for i in sample_indices:
         color = label_to_color[labels[i]]
-        if labels[i] == largest_cluster:
-            ax.plot(time_points, X_scaled[i, :], color=color, linewidth=1.2, alpha=0.5)
-        else:
-            ax.plot(time_points, X_scaled[i, :], color=color, linewidth=0.6, alpha=0.5)
+        ax.plot(time_points, X_scaled[i, :], color=color, linewidth=0.8, alpha=0.6)
     
-    # 图例
+    # 图例（只显示非最大簇）
     legend_handles = []
-    for label in unique_labels:
+    for label in other_labels:
         count = np.sum(labels == label)
         color = label_to_color[label]
-        if label == largest_cluster:
-            label_name = f'Major Cluster (n={count})'
-        else:
-            label_name = f'Cluster {label+1} (n={count})'
+        label_name = f'Cluster {label+1} (n={count})'
         legend_handles.append(plt.Line2D([0], [0], color=color, linewidth=2, label=label_name))
     ax.legend(handles=legend_handles, loc='best', frameon=True, fancybox=True, fontsize=8)
     
-    ax.set_title(f'{method}', fontweight='bold')
+    # 在标题中注明最大簇被排除
+    major_count = np.sum(labels == largest_cluster)
+    ax.set_title(f'{method} (Major Cluster n={major_count} excluded)', fontweight='bold')
     ax.set_xlabel('Trading Day', fontsize=10)
     ax.set_ylabel('Standardized Price Index', fontsize=10)
     ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.5)
     ax.set_xlim(1, n_days)
 
 plt.tight_layout()
-plt.savefig('result/hierarchical/cluster_curves_comparison.png', dpi=300, bbox_inches='tight')
-plt.savefig('result/hierarchical/cluster_curves_comparison.pdf', format='pdf', bbox_inches='tight')
-print("Visualization saved: result/hierarchical/cluster_curves_comparison.png/pdf")
-# ==========================================
+plt.savefig('result/hierarchical/cluster_curves_comparison_no_major.png', dpi=300, bbox_inches='tight')
+plt.savefig('result/hierarchical/cluster_curves_comparison_no_major.pdf', format='pdf', bbox_inches='tight')
+print("Visualization saved: result/hierarchical/cluster_curves_comparison_no_major.png/pdf")
+
+
 # 12. 树状图展示（学术风格）
 # ==========================================
 print("\n[11] Generating dendrograms...")
