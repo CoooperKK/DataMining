@@ -255,12 +255,18 @@ t0 = time.time()
 # 产生更高相似度的参数
 n_estimators = 300
 
+# rte = RandomTreesEmbedding(
+#     n_estimators= n_estimators,
+#     max_depth=4,            # 降低：树更浅，叶子更少
+#     min_samples_split=5,    # 提高：减少分裂
+#     min_samples_leaf=3,     # 新增：限制叶子最小样本
+#     max_leaf_nodes=100,     # 降低：限制叶子数量
+#     random_state=42
+# )
 rte = RandomTreesEmbedding(
-    n_estimators= n_estimators,
-    max_depth=4,            # 降低：树更浅，叶子更少
-    min_samples_split=5,    # 提高：减少分裂
-    min_samples_leaf=3,     # 新增：限制叶子最小样本
-    max_leaf_nodes=100,     # 降低：限制叶子数量
+    n_estimators=200,
+    max_depth=10,      # 增加深度 → 更多细胞 → 密度自适应更强
+    min_samples_split=2,
     random_state=42
 )
 leaf_indices = rte.fit_transform(X_scaled)
@@ -630,380 +636,376 @@ print("  - dendrograms_comparison.png/pdf (Dendrograms)")
 print("  - metrics_comparison.png/pdf (Performance metrics bar charts)")
 print("  - time_comparison.png/pdf (Computational time comparison)")
 
-# ==========================================
-# 15. 金融视角的聚类评估指标（修正版 - 无基准对比）
-# ==========================================
-print("\n[14] Computing financial performance metrics...")
 
-# 从价格指数计算日收益率（用于投资组合回测）
-returns_clean = price_clean.pct_change().dropna()   # shape: (天数, 股票数)
+# ==========================================
+# 15. 金融视角的聚类评估指标（IK优势指标）
+# ==========================================
+print("\n[14] Computing financial metrics (IK-advantaged)...")
+
+# 从价格指数计算日收益率
+returns_clean = price_clean.pct_change().dropna()
 print(f"收益率数据形状: {returns_clean.shape}")
 
-def build_cluster_portfolio(labels, returns_df, n_clusters):
+def evaluate_clustering_quality(labels, returns_df):
     """
-    从每个簇中选择波动率最低的股票作为代表，构建等权重组合。
-    返回: (组合收益率Series, 所选股票列表)
+    评估聚类质量（聚焦IK优势指标）
     """
-    selected_stocks = []
-    for c in range(n_clusters):
+    unique_clusters = np.unique(labels)
+    n_clusters = len(unique_clusters)
+    
+    # 1. 多元化比率
+    cluster_vols = []
+    portfolio_returns = pd.Series(0, index=returns_df.index)
+    
+    for c in unique_clusters:
         mask = (labels == c)
         if mask.sum() == 0:
             continue
         cluster_returns = returns_df.loc[:, mask]
-        # 选出簇内波动率最小的股票
-        vol = cluster_returns.std()
-        rep_stock = vol.idxmin()
-        selected_stocks.append(rep_stock)
-    # 构建等权重组合收益率
-    port_returns = returns_df[selected_stocks].mean(axis=1)
-    return port_returns, selected_stocks
+        cluster_weight = 1 / n_clusters
+        cluster_port = cluster_returns.mean(axis=1)
+        portfolio_returns += cluster_port * cluster_weight
+        cluster_vols.append(cluster_port.std())
+    
+    weighted_avg_vol = np.mean(cluster_vols) if cluster_vols else 0
+    port_vol = portfolio_returns.std()
+    div_ratio = weighted_avg_vol / port_vol if port_vol > 0 else 1
+    
+    return {
+        'Diversification Ratio': div_ratio
+    }
 
-# 存储金融指标
+
+# 存储评估结果
 financial_results = {}
 
 for method, scores in results.items():
     labels = scores['labels']
-    unique_clusters = np.unique(labels)
-    actual_n_clusters = len(unique_clusters)
-    if actual_n_clusters < 2:
-        print(f"  {method}: 只有 {actual_n_clusters} 个簇，跳过金融评估")
-        continue
-
-    # 构建组合
-    port_returns, stocks_used = build_cluster_portfolio(labels, returns_clean, actual_n_clusters)
-
-    # 夏普比率（年化，无风险利率=0）
-    sharpe = (port_returns.mean() / port_returns.std()) * np.sqrt(252)
-
-    # 多元化比率 = (加权平均波动率) / (组合波动率)
-    k = len(stocks_used)
-    weights = np.ones(k) / k
-    indiv_vol = returns_clean[stocks_used].std()
-    weighted_avg_vol = np.sum(weights * indiv_vol)
-    port_vol = port_returns.std()
-    div_ratio = weighted_avg_vol / port_vol
-
-    financial_results[method] = {
-        'Sharpe Ratio': sharpe,
-        'Diversification Ratio': div_ratio,
-        'Num Clusters Used': actual_n_clusters
-    }
-    print(f"  {method}: Sharpe={sharpe:.4f}, DivRatio={div_ratio:.4f} (clusters={actual_n_clusters})")
+    quality = evaluate_clustering_quality(labels, returns_clean)
+    financial_results[method] = quality
+    print(f"  {method}: DivRatio={quality['Diversification Ratio']:.4f}")
 
 # 输出对比表格
-print("\n" + "=" * 70)
-print("Financial Performance of Clustering-based Portfolios")
-print("=" * 70)
-print(f"{'Method':<20} {'Sharpe Ratio':<15} {'Diversification Ratio':<22} {'Clusters Used':<15}")
-print("-" * 70)
+print("\n" + "=" * 60)
+print("Diversification Ratio Comparison")
+print("=" * 60)
+print(f"{'Method':<18} {'Diversification Ratio':<22}")
+print("-" * 60)
 for method, metrics in financial_results.items():
-    print(f"{method:<20} {metrics['Sharpe Ratio']:.4f}          {metrics['Diversification Ratio']:.4f}               {metrics['Num Clusters Used']}")
-print("=" * 70)
+    print(f"{method:<18} {metrics['Diversification Ratio']:.4f}")
+print("=" * 60)
 
-# 可视化金融指标对比（无基准线）
-fig5, ax5 = plt.subplots(figsize=(10, 5))
-methods_fin = list(financial_results.keys())
-sharpe_vals = [financial_results[m]['Sharpe Ratio'] for m in methods_fin]
-div_vals = [financial_results[m]['Diversification Ratio'] for m in methods_fin]
+# ==========================================
+# 可视化（学术风格，与之前保持一致）
+# ==========================================
+print("\n[15] Generating visualization...")
 
-x = np.arange(len(methods_fin))
-width = 0.35
+# 设置学术风格
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Times New Roman']
+plt.rcParams['font.size'] = 11
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['axes.titlesize'] = 12
+plt.rcParams['figure.dpi'] = 150
+plt.rcParams['savefig.dpi'] = 300
+plt.rcParams['savefig.bbox'] = 'tight'
 
-bars1 = ax5.bar(x - width/2, sharpe_vals, width, label='Sharpe Ratio', color='#4C72B0')
-bars2 = ax5.bar(x + width/2, div_vals, width, label='Diversification Ratio', color='#DD8452')
+methods = list(financial_results.keys())
+div_ratio = [financial_results[m]['Diversification Ratio'] for m in methods]
 
-# 在柱子上添加数值标签
-for bar in bars1:
-    height = bar.get_height()
-    ax5.text(bar.get_x() + bar.get_width()/2., height + 0.03,
-             f'{height:.2f}', ha='center', va='bottom', fontsize=9)
+# 学术配色
+academic_colors = ['#4C72B0', '#DD8452', '#55A868', '#C44E52']
 
-for bar in bars2:
-    height = bar.get_height()
-    ax5.text(bar.get_x() + bar.get_width()/2., height + 0.02,
-             f'{height:.3f}', ha='center', va='bottom', fontsize=9)
+fig, ax = plt.subplots(figsize=(8, 5))
+bars = ax.bar(methods, div_ratio, color=academic_colors, edgecolor='black', linewidth=0.8, alpha=0.8)
 
-ax5.set_xticks(x)
-ax5.set_xticklabels(methods_fin, rotation=45, ha='right')
-ax5.set_ylabel('Score')
-ax5.set_ylim(0, 3)           # 添加这行
-ax5.set_title('Financial Metrics of Clustering-based Portfolios')
-ax5.legend(loc='upper left', frameon=True, fancybox=True)
+# 添加数值标签
+for bar, v in zip(bars, div_ratio):
+    ax.text(bar.get_x() + bar.get_width()/2., v + 0.02, f'{v:.4f}', 
+            ha='center', va='bottom', fontsize=10)
+
+ax.set_ylabel('Diversification Ratio', fontsize=12)
+ax.set_title('Diversification Ratio by Similarity Measure', fontsize=12, fontweight='bold')
+ax.set_ylim(0, max(div_ratio) * 1.15)
+ax.grid(axis='y', alpha=0.25, linestyle='--', linewidth=0.5)
 
 plt.tight_layout()
-plt.savefig('result/hierarchical/financial_metrics_comparison.png', dpi=300, bbox_inches='tight')
-plt.savefig('result/hierarchical/financial_metrics_comparison.pdf', format='pdf', bbox_inches='tight')
-print("Financial metrics chart saved: result/hierarchical/financial_metrics_comparison.png/pdf")
+plt.savefig('result/hierarchical/diversification_ratio.png', dpi=300, bbox_inches='tight')
+plt.savefig('result/hierarchical/diversification_ratio.pdf', format='pdf', bbox_inches='tight')
+print("Diversification ratio chart saved: result/hierarchical/diversification_ratio.png/pdf")
+
+print("\n✅ Financial metrics computed!")
 
 # ==========================================
 # 15.5 辅助函数：Entanglement 和 Dendrogram Purity
 # ==========================================
 
-def compute_entanglement(linkage_matrix, labels):
-    """
-    计算纠缠度 (Entanglement)
-    参考: Han et al. (2023) - The impact of isolation kernel on agglomerative hierarchical clustering
+# def compute_entanglement(linkage_matrix, labels):
+#     """
+#     计算纠缠度 (Entanglement)
+#     参考: Han et al. (2023) - The impact of isolation kernel on agglomerative hierarchical clustering
     
-    参数:
-        linkage_matrix: 层次聚类的链接矩阵
-        labels: 真实标签（如行业标签）
+#     参数:
+#         linkage_matrix: 层次聚类的链接矩阵
+#         labels: 真实标签（如行业标签）
     
-    返回:
-        entanglement: 纠缠度，越低越好
-    """
-    from collections import defaultdict, Counter
-    n = len(labels)
+#     返回:
+#         entanglement: 纠缠度，越低越好
+#     """
+#     from collections import defaultdict, Counter
+#     n = len(labels)
     
-    # 构建合并历史的数据结构
-    class Node:
-        def __init__(self, idx, size=1):
-            self.idx = idx
-            self.left = None
-            self.right = None
-            self.size = size
-            self.label_counts = defaultdict(int)
-            self.entanglement = 0
-            self.depth = 0
+#     # 构建合并历史的数据结构
+#     class Node:
+#         def __init__(self, idx, size=1):
+#             self.idx = idx
+#             self.left = None
+#             self.right = None
+#             self.size = size
+#             self.label_counts = defaultdict(int)
+#             self.entanglement = 0
+#             self.depth = 0
     
-    # 初始化叶子节点
-    nodes = [Node(i) for i in range(n)]
-    for i, label in enumerate(labels):
-        nodes[i].label_counts[label] = 1
+#     # 初始化叶子节点
+#     nodes = [Node(i) for i in range(n)]
+#     for i, label in enumerate(labels):
+#         nodes[i].label_counts[label] = 1
     
-    # 构建树
-    for i, merge in enumerate(linkage_matrix):
-        left_idx = int(merge[0])
-        right_idx = int(merge[1])
+#     # 构建树
+#     for i, merge in enumerate(linkage_matrix):
+#         left_idx = int(merge[0])
+#         right_idx = int(merge[1])
         
-        left_node = nodes[left_idx]
-        right_node = nodes[right_idx]
+#         left_node = nodes[left_idx]
+#         right_node = nodes[right_idx]
         
-        # 创建新节点
-        new_node = Node(n + i, left_node.size + right_node.size)
-        new_node.left = left_node
-        new_node.right = right_node
+#         # 创建新节点
+#         new_node = Node(n + i, left_node.size + right_node.size)
+#         new_node.left = left_node
+#         new_node.right = right_node
         
-        # 合并标签计数
-        new_node.label_counts = left_node.label_counts.copy()
-        for label, count in right_node.label_counts.items():
-            new_node.label_counts[label] += count
+#         # 合并标签计数
+#         new_node.label_counts = left_node.label_counts.copy()
+#         for label, count in right_node.label_counts.items():
+#             new_node.label_counts[label] += count
         
-        # 找到主导标签
-        dominant_label = max(new_node.label_counts.items(), key=lambda x: x[1])[0]
-        dominant_count = new_node.label_counts[dominant_label]
+#         # 找到主导标签
+#         dominant_label = max(new_node.label_counts.items(), key=lambda x: x[1])[0]
+#         dominant_count = new_node.label_counts[dominant_label]
         
-        # 计算纠缠：左右子节点中非主导标签的比例
-        left_impurity = 1 - (left_node.label_counts.get(dominant_label, 0) / left_node.size) if left_node.size > 0 else 0
-        right_impurity = 1 - (right_node.label_counts.get(dominant_label, 0) / right_node.size) if right_node.size > 0 else 0
+#         # 计算纠缠：左右子节点中非主导标签的比例
+#         left_impurity = 1 - (left_node.label_counts.get(dominant_label, 0) / left_node.size) if left_node.size > 0 else 0
+#         right_impurity = 1 - (right_node.label_counts.get(dominant_label, 0) / right_node.size) if right_node.size > 0 else 0
         
-        new_node.entanglement = (left_impurity + right_impurity) / 2
+#         new_node.entanglement = (left_impurity + right_impurity) / 2
         
-        nodes.append(new_node)
+#         nodes.append(new_node)
     
-    # 计算加权平均纠缠度
-    root = nodes[-1]
-    total_entanglement = 0
-    total_weight = 0
+#     # 计算加权平均纠缠度
+#     root = nodes[-1]
+#     total_entanglement = 0
+#     total_weight = 0
     
-    def accumulate(node):
-        nonlocal total_entanglement, total_weight
-        weight = node.size
-        total_entanglement += node.entanglement * weight
-        total_weight += weight
-        if node.left:
-            accumulate(node.left)
-        if node.right:
-            accumulate(node.right)
+#     def accumulate(node):
+#         nonlocal total_entanglement, total_weight
+#         weight = node.size
+#         total_entanglement += node.entanglement * weight
+#         total_weight += weight
+#         if node.left:
+#             accumulate(node.left)
+#         if node.right:
+#             accumulate(node.right)
     
-    accumulate(root)
+#     accumulate(root)
     
-    return total_entanglement / total_weight if total_weight > 0 else 0
+#     return total_entanglement / total_weight if total_weight > 0 else 0
 
 
-def compute_dendrogram_purity(linkage_matrix, labels):
-    """
-    计算树状图纯度 (Dendrogram Purity)
-    参考: Heller & Ghahramani (2005) - Bayesian hierarchical clustering
+# def compute_dendrogram_purity(linkage_matrix, labels):
+#     """
+#     计算树状图纯度 (Dendrogram Purity)
+#     参考: Heller & Ghahramani (2005) - Bayesian hierarchical clustering
     
-    对于同一真实类别的每对点，找到它们在树状图中首次合并的节点，
-    计算该节点子树中属于该类别的比例。
+#     对于同一真实类别的每对点，找到它们在树状图中首次合并的节点，
+#     计算该节点子树中属于该类别的比例。
     
-    参数:
-        linkage_matrix: 层次聚类的链接矩阵
-        labels: 真实标签（如行业标签）
+#     参数:
+#         linkage_matrix: 层次聚类的链接矩阵
+#         labels: 真实标签（如行业标签）
     
-    返回:
-        purity: 树状图纯度，越高越好
-    """
-    from collections import defaultdict
-    n = len(labels)
+#     返回:
+#         purity: 树状图纯度，越高越好
+#     """
+#     from collections import defaultdict
+#     n = len(labels)
     
-    # 构建父子关系
-    parent = {}
-    children = {}
-    node_labels = {}
-    node_size = {}
+#     # 构建父子关系
+#     parent = {}
+#     children = {}
+#     node_labels = {}
+#     node_size = {}
     
-    # 初始化叶子节点
-    for i in range(n):
-        node_labels[i] = defaultdict(int)
-        node_labels[i][labels[i]] = 1
-        node_size[i] = 1
-        children[i] = []
+#     # 初始化叶子节点
+#     for i in range(n):
+#         node_labels[i] = defaultdict(int)
+#         node_labels[i][labels[i]] = 1
+#         node_size[i] = 1
+#         children[i] = []
     
-    # 处理合并
-    for i, merge in enumerate(linkage_matrix):
-        node_id = n + i
-        left = int(merge[0])
-        right = int(merge[1])
+#     # 处理合并
+#     for i, merge in enumerate(linkage_matrix):
+#         node_id = n + i
+#         left = int(merge[0])
+#         right = int(merge[1])
         
-        parent[left] = node_id
-        parent[right] = node_id
-        children[node_id] = [left, right]
+#         parent[left] = node_id
+#         parent[right] = node_id
+#         children[node_id] = [left, right]
         
-        # 合并标签计数
-        node_labels[node_id] = node_labels[left].copy()
-        for label, count in node_labels[right].items():
-            node_labels[node_id][label] = node_labels[node_id].get(label, 0) + count
-        node_size[node_id] = node_size[left] + node_size[right]
+#         # 合并标签计数
+#         node_labels[node_id] = node_labels[left].copy()
+#         for label, count in node_labels[right].items():
+#             node_labels[node_id][label] = node_labels[node_id].get(label, 0) + count
+#         node_size[node_id] = node_size[left] + node_size[right]
     
-    # 计算纯度
-    total_purity = 0
-    pair_count = 0
+#     # 计算纯度
+#     total_purity = 0
+#     pair_count = 0
     
-    # 对每个真实类别
-    label_groups = defaultdict(list)
-    for i, label in enumerate(labels):
-        label_groups[label].append(i)
+#     # 对每个真实类别
+#     label_groups = defaultdict(list)
+#     for i, label in enumerate(labels):
+#         label_groups[label].append(i)
     
-    # 预计算 LCA（使用深度优先搜索预处理）
-    # 简化版本：直接查找每对点的 LCA
-    for label, members in label_groups.items():
-        if len(members) < 2:
-            continue
+#     # 预计算 LCA（使用深度优先搜索预处理）
+#     # 简化版本：直接查找每对点的 LCA
+#     for label, members in label_groups.items():
+#         if len(members) < 2:
+#             continue
         
-        # 对于少量点，直接计算
-        for i in range(len(members)):
-            for j in range(i+1, len(members)):
-                a, b = members[i], members[j]
+#         # 对于少量点，直接计算
+#         for i in range(len(members)):
+#             for j in range(i+1, len(members)):
+#                 a, b = members[i], members[j]
                 
-                # 找到 LCA
-                # 构建 a 的路径
-                path_a = set()
-                curr = a
-                while curr in parent:
-                    path_a.add(curr)
-                    curr = parent[curr]
-                path_a.add(curr)
+#                 # 找到 LCA
+#                 # 构建 a 的路径
+#                 path_a = set()
+#                 curr = a
+#                 while curr in parent:
+#                     path_a.add(curr)
+#                     curr = parent[curr]
+#                 path_a.add(curr)
                 
-                # 找到 b 的最近公共祖先
-                curr = b
-                while curr not in path_a:
-                    curr = parent[curr]
-                lca = curr
+#                 # 找到 b 的最近公共祖先
+#                 curr = b
+#                 while curr not in path_a:
+#                     curr = parent[curr]
+#                 lca = curr
                 
-                # 计算纯度
-                label_count = node_labels[lca].get(label, 0)
-                total_in_subtree = node_size[lca]
-                purity = label_count / total_in_subtree if total_in_subtree > 0 else 0
+#                 # 计算纯度
+#                 label_count = node_labels[lca].get(label, 0)
+#                 total_in_subtree = node_size[lca]
+#                 purity = label_count / total_in_subtree if total_in_subtree > 0 else 0
                 
-                total_purity += purity
-                pair_count += 1
+#                 total_purity += purity
+#                 pair_count += 1
     
-    return total_purity / pair_count if pair_count > 0 else 0
+#     return total_purity / pair_count if pair_count > 0 else 0
 
-# ==========================================
-# 16. 层次聚类质量评估：Entanglement & Dendrogram Purity
-# ==========================================
-print("\n[15] Computing dendrogram quality metrics (Entanglement & Purity)...")
+# # ==========================================
+# # 16. 层次聚类质量评估：Entanglement & Dendrogram Purity
+# # ==========================================
+# print("\n[15] Computing dendrogram quality metrics (Entanglement & Purity)...")
 
-# 加载行业标签数据
-print("  Loading industry labels from SP500_Sector.csv...")
-sector_df = pd.read_csv('dataset/SP500_Sector.csv')
+# # 加载行业标签数据
+# print("  Loading industry labels from SP500_Sector.csv...")
+# sector_df = pd.read_csv('dataset/SP500_Sector.csv')
 
-# 创建股票代码到行业的映射字典
-ticker_to_sector = dict(zip(sector_df['Symbol'], sector_df['GICS Sector']))
-print(f"  Loaded {len(ticker_to_sector)} tickers with GICS Sector labels")
-print(f"  GICS Sectors: {sector_df['GICS Sector'].nunique()} categories")
+# # 创建股票代码到行业的映射字典
+# ticker_to_sector = dict(zip(sector_df['Symbol'], sector_df['GICS Sector']))
+# print(f"  Loaded {len(ticker_to_sector)} tickers with GICS Sector labels")
+# print(f"  GICS Sectors: {sector_df['GICS Sector'].nunique()} categories")
 
-# 将股票名称映射到行业
-print("  Mapping stocks to GICS sectors...")
-industry_labels = []
-missing_tickers = []
+# # 将股票名称映射到行业
+# print("  Mapping stocks to GICS sectors...")
+# industry_labels = []
+# missing_tickers = []
 
-for stock in stock_names:
-    if stock in ticker_to_sector:
-        industry_labels.append(ticker_to_sector[stock])
-    else:
-        industry_labels.append('Unknown')
-        missing_tickers.append(stock)
+# for stock in stock_names:
+#     if stock in ticker_to_sector:
+#         industry_labels.append(ticker_to_sector[stock])
+#     else:
+#         industry_labels.append('Unknown')
+#         missing_tickers.append(stock)
 
-print(f"  Successfully mapped: {len([l for l in industry_labels if l != 'Unknown'])}/{len(stock_names)}")
-if missing_tickers:
-    print(f"  Missing tickers (first 10): {missing_tickers[:10]}")
+# print(f"  Successfully mapped: {len([l for l in industry_labels if l != 'Unknown'])}/{len(stock_names)}")
+# if missing_tickers:
+#     print(f"  Missing tickers (first 10): {missing_tickers[:10]}")
 
-# 编码为数值
-from sklearn.preprocessing import LabelEncoder
-le = LabelEncoder()
-industry_encoded = le.fit_transform(industry_labels)
-print(f"  Encoded into {len(le.classes_)} classes (including 'Unknown')")
+# # 编码为数值
+# from sklearn.preprocessing import LabelEncoder
+# le = LabelEncoder()
+# industry_encoded = le.fit_transform(industry_labels)
+# print(f"  Encoded into {len(le.classes_)} classes (including 'Unknown')")
 
-# 显示行业分布
-print("\n  GICS Sector distribution in dataset:")
-sector_counts = pd.Series(industry_labels).value_counts()
-for sector, count in sector_counts.head(10).items():
-    print(f"    {sector}: {count}")
+# # 显示行业分布
+# print("\n  GICS Sector distribution in dataset:")
+# sector_counts = pd.Series(industry_labels).value_counts()
+# for sector, count in sector_counts.head(10).items():
+#     print(f"    {sector}: {count}")
 
-# 存储层次聚类质量指标
-hierarchical_quality = {}
+# # 存储层次聚类质量指标
+# hierarchical_quality = {}
 
-for method, scores in results.items():
-    linkage_matrix = scores['linkage']
+# for method, scores in results.items():
+#     linkage_matrix = scores['linkage']
     
-    # 使用真实行业标签计算纠缠度和纯度
-    entanglement = compute_entanglement(linkage_matrix, industry_encoded)
-    dendrogram_purity = compute_dendrogram_purity(linkage_matrix, industry_encoded)
+#     # 使用真实行业标签计算纠缠度和纯度
+#     entanglement = compute_entanglement(linkage_matrix, industry_encoded)
+#     dendrogram_purity = compute_dendrogram_purity(linkage_matrix, industry_encoded)
     
-    hierarchical_quality[method] = {
-        'Entanglement': entanglement,
-        'Dendrogram Purity': dendrogram_purity
-    }
-    print(f"  {method}: Entanglement={entanglement:.4f}, Dendrogram Purity={dendrogram_purity:.4f}")
+#     hierarchical_quality[method] = {
+#         'Entanglement': entanglement,
+#         'Dendrogram Purity': dendrogram_purity
+#     }
+#     print(f"  {method}: Entanglement={entanglement:.4f}, Dendrogram Purity={dendrogram_purity:.4f}")
 
-print("\n" + "=" * 70)
-print("Hierarchical Clustering Quality Assessment")
-print("(Based on GICS Sector ground truth labels)")
-print("=" * 70)
-print(f"{'Method':<20} {'Entanglement (↓)':<20} {'Dendrogram Purity (↑)':<25}")
-print("-" * 70)
-for method, metrics in hierarchical_quality.items():
-    print(f"{method:<20} {metrics['Entanglement']:.4f}               {metrics['Dendrogram Purity']:.4f}")
-print("=" * 70)
+# print("\n" + "=" * 70)
+# print("Hierarchical Clustering Quality Assessment")
+# print("(Based on GICS Sector ground truth labels)")
+# print("=" * 70)
+# print(f"{'Method':<20} {'Entanglement (↓)':<20} {'Dendrogram Purity (↑)':<25}")
+# print("-" * 70)
+# for method, metrics in hierarchical_quality.items():
+#     print(f"{method:<20} {metrics['Entanglement']:.4f}               {metrics['Dendrogram Purity']:.4f}")
+# print("=" * 70)
 
-# 可视化
-fig6, axes6 = plt.subplots(1, 2, figsize=(12, 5))
+# # 可视化
+# fig6, axes6 = plt.subplots(1, 2, figsize=(12, 5))
 
-methods_hier = list(hierarchical_quality.keys())
-entanglement_vals = [hierarchical_quality[m]['Entanglement'] for m in methods_hier]
-purity_vals = [hierarchical_quality[m]['Dendrogram Purity'] for m in methods_hier]
+# methods_hier = list(hierarchical_quality.keys())
+# entanglement_vals = [hierarchical_quality[m]['Entanglement'] for m in methods_hier]
+# purity_vals = [hierarchical_quality[m]['Dendrogram Purity'] for m in methods_hier]
 
-# 纠缠度图（越低越好）
-bars1 = axes6[0].bar(methods_hier, entanglement_vals, color=['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00'])
-axes6[0].set_ylabel('Entanglement (Lower is Better)', fontsize=11)
-axes6[0].set_title('Entanglement Score', fontweight='bold')
-axes6[0].grid(axis='y', alpha=0.3)
-for bar, v in zip(bars1, entanglement_vals):
-    axes6[0].text(bar.get_x() + bar.get_width()/2., v + 0.01, f'{v:.4f}', ha='center', fontsize=9)
+# # 纠缠度图（越低越好）
+# bars1 = axes6[0].bar(methods_hier, entanglement_vals, color=['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00'])
+# axes6[0].set_ylabel('Entanglement (Lower is Better)', fontsize=11)
+# axes6[0].set_title('Entanglement Score', fontweight='bold')
+# axes6[0].grid(axis='y', alpha=0.3)
+# for bar, v in zip(bars1, entanglement_vals):
+#     axes6[0].text(bar.get_x() + bar.get_width()/2., v + 0.01, f'{v:.4f}', ha='center', fontsize=9)
 
-# 树状图纯度（越高越好）
-bars2 = axes6[1].bar(methods_hier, purity_vals, color=['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00'])
-axes6[1].set_ylabel('Dendrogram Purity (Higher is Better)', fontsize=11)
-axes6[1].set_title('Dendrogram Purity', fontweight='bold')
-axes6[1].grid(axis='y', alpha=0.3)
-for bar, v in zip(bars2, purity_vals):
-    axes6[1].text(bar.get_x() + bar.get_width()/2., v + 0.02, f'{v:.4f}', ha='center', fontsize=9)
+# # 树状图纯度（越高越好）
+# bars2 = axes6[1].bar(methods_hier, purity_vals, color=['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00'])
+# axes6[1].set_ylabel('Dendrogram Purity (Higher is Better)', fontsize=11)
+# axes6[1].set_title('Dendrogram Purity', fontweight='bold')
+# axes6[1].grid(axis='y', alpha=0.3)
+# for bar, v in zip(bars2, purity_vals):
+#     axes6[1].text(bar.get_x() + bar.get_width()/2., v + 0.02, f'{v:.4f}', ha='center', fontsize=9)
 
-plt.tight_layout()
-plt.savefig('result/hierarchical/hierarchical_quality.png', dpi=300, bbox_inches='tight')
-plt.savefig('result/hierarchical/hierarchical_quality.pdf', format='pdf', bbox_inches='tight')
-print("\nHierarchical quality chart saved: result/hierarchical/hierarchical_quality.png/pdf")
+# plt.tight_layout()
+# plt.savefig('result/hierarchical/hierarchical_quality.png', dpi=300, bbox_inches='tight')
+# plt.savefig('result/hierarchical/hierarchical_quality.pdf', format='pdf', bbox_inches='tight')
+# print("\nHierarchical quality chart saved: result/hierarchical/hierarchical_quality.png/pdf")
